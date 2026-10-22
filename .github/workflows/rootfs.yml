@@ -79,6 +79,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
+      - name: Checkout steamos repo (workspace root，供 nix-installer 识别 git 仓库)
+        uses: actions/checkout@v7
+
       - name: Checkout liuqin-linux-kit
         uses: actions/checkout@v7
         with:
@@ -92,12 +95,12 @@ jobs:
       - name: Prepare ROM + kernel + modules + boot
         run: |
           cd liuqin-linux-kit
-          devbox run -- init-build || true
+          devbox run init-build || true
           # 原厂 ROM 用于固件/调音/传感器配置提取（fetch-rom 从 cpidMi 下载完整包）
-          devbox run -- fetch-rom || true
-          devbox run -- kernel || true
-          devbox run -- modules || true
-          devbox run -- boot || true
+          devbox run fetch-rom || true
+          devbox run kernel || true
+          devbox run modules || true
+          devbox run boot || true
           ls -la out/build/devbox/boot 2>/dev/null || true
 
       - name: Assemble device-inputs bundle
