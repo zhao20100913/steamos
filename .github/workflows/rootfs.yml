@@ -104,7 +104,7 @@ jobs:
           OUT=graft-inputs
           rm -rf "$OUT"; mkdir -p "$OUT"/{kernel,firmware,overlay,sensors,audio,root,contract}
           # 模块阶段产物：modules.tar（整棵树）+ kernel.release + modules.manifest
-          MODDIR="$(find out/build/from-source -maxdepth 3 -type d -name modules 2>/dev/null | head -1 || true)"
+          MODDIR="$(find out/build/from-source -maxdepth 3 -type d -name modules -not -path '*/.attempt-*' 2>/dev/null | head -1 || true)"
           if [ -n "$MODDIR" ]; then
             # 解出模块树，让 graft 脚本能按 /usr/lib/modules/<release>/ 铺
             if [ -f "$MODDIR/modules.tar" ]; then
@@ -116,10 +116,10 @@ jobs:
             cp -f "$MODDIR/modules.manifest" "$OUT/kernel/modules.manifest" 2>/dev/null || true
           fi
           # 内核 Image（若 boot 阶段没单独留，从 kernel 阶段产物找）
-          KIMG="$(find out/build/from-source -path '*arch/arm64/boot/Image' 2>/dev/null | head -1 || true)"
+          KIMG="$(find out/build/from-source -path '*arch/arm64/boot/Image' -not -path '*/.attempt-*' 2>/dev/null | head -1 || true)"
           [ -z "$KIMG" ] || cp -f "$KIMG" "$OUT/kernel/Image"
           # boot.contract（native-root.contract）
-          BC="$(find out -name 'native-root.contract' 2>/dev/null | head -1 || true)"
+          BC="$(find out -name 'native-root.contract' -not -path '*/.attempt-*' 2>/dev/null | head -1 || true)"
           [ -z "$BC" ] || cp -f "$BC" "$OUT/kernel/boot.contract"
           [ -z "$BC" ] || cp -f "$BC" "$OUT/contract/native-root.contract"
           # 设备 overlay：gnome-overlay + 设备服务（这些文件本就是根分区的项目自有路径）
@@ -134,8 +134,11 @@ jobs:
           cp device/boot/root-interface-v2.sh "$OUT/root/" 2>/dev/null || true
           cp inputs/busybox-arm64/usr/bin/busybox "$OUT/root/busybox" 2>/dev/null || true
           # boot.img（目标内核）
-          BOOTIMG="$(find out -name 'boot-liuqin-native.img' 2>/dev/null | head -1)"
+          BOOTIMG="$(find out -name 'boot-liuqin-native.img' -not -path '*/.attempt-*' 2>/dev/null | head -1 || true)"
           [ -z "$BOOTIMG" ] || cp "$BOOTIMG" "$OUT/boot.img"
+          # 关键产物自检：缺 boot.img / 内核模块 直接失败（别产出残缺包再让 assemble 摸黑）
+          [ -s "$OUT/boot.img" ] || { echo "::error::没有 boot.img（boot 阶段没产出？）"; exit 1; }
+          { [ -d "$OUT/kernel/usr/lib/modules" ] || [ -d "$OUT/kernel/modules" ]; } || { echo "::error::没有内核模块树"; exit 1; }
           tar -czf liuqin-inputs.tar.gz -C "$OUT" .
           echo "liuqin-inputs 打包完成：$(du -h liuqin-inputs.tar.gz | cut -f1)"
 
