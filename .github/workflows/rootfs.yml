@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: ''
+      reuse_inputs:
+        description: '复用某次成功 device-inputs 的 run-id（跳过内核重编译，只跑 assemble）'
+        required: false
+        type: string
+        default: ''
       upload_artifacts:
         description: '上传 rootfs.img / boot.img'
         required: false
@@ -76,6 +81,7 @@ jobs:
   # -------------------------------------------------------------------------
   device-inputs:
     name: Build liuqin device inputs (kernel/modules/boot/firmware/overlay)
+    if: ${{ inputs.reuse_inputs == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -156,6 +162,7 @@ jobs:
   assemble:
     name: Assemble SteamOS-for-liuqin RootFS
     needs: [device-inputs]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 360
     env:
@@ -190,6 +197,7 @@ jobs:
         with:
           name: liuqin-inputs
           path: inputs
+          run-id: ${{ inputs.reuse_inputs || github.run_id }}
 
       - name: Lay Frame userspace into our image
         run: |
@@ -217,11 +225,19 @@ jobs:
           sudo cp scripts/in-chroot/10-graft.sh "$ROOTFS_MOUNT/root/graft/"
           sudo chmod +x "$ROOTFS_MOUNT/root/graft/10-graft.sh"
           chmod +x scripts/in-chroot/10-graft.sh
+          # graft 输出落盘，失败时打印尾部，避免被别的步骤刷屏淹没
           sudo chroot "$ROOTFS_MOUNT" /bin/bash -c \
             "PARTLABEL='linux_root' KERNEL_RELEASE='${{ inputs.kernel_release }}' \
              WIFI_SSID='${{ inputs.wifi_ssid }}' WIFI_PSK='${{ inputs.wifi_password }}' \
              ROOT_PW='${{ inputs.root_password }}' SSH_PUBKEY='${{ inputs.ssh_pubkey }}' \
-             bash /root/graft/10-graft.sh"
+             bash /root/graft/10-graft.sh" > graft-output.log 2>&1 || {
+            rc=$?
+            echo "::error::graft 脚本失败（rc=$rc），输出尾部："
+            tail -60 graft-output.log
+            exit $rc
+          }
+          echo "=== graft 输出尾部 ==="
+          tail -40 graft-output.log
 
       - name: Unmount & finalize
         if: always()

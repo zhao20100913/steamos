@@ -104,10 +104,10 @@ mount -o loop "$IMG" "$MOUNT_DST" || die "挂载新镜像失败"
 log "rsync Frame userspace → 我们的镜像"
 RSYNC_LOG="$SRC_DIR/lay-rsync.log"
 set +e
-rsync -aHAX --numeric-ids --info=progress2 \
+rsync -aHAX --numeric-ids \
   --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' \
   --exclude='/tmp/*' --exclude='/var/cache/pacman/pkg/*' \
-  "$SRC_ROOT/" "$MOUNT_DST/" 2>"$RSYNC_LOG"
+  "$SRC_ROOT/" "$MOUNT_DST/" >/dev/null 2>"$RSYNC_LOG"
 rc="$?"
 set -e
 if [[ "$rc" -ne 0 ]]; then
@@ -128,7 +128,7 @@ for e in "${MERGE_LIST[@]:-}"; do
   s="${e%%$'\t'*}"; d="${e##*$'\t'}"
   log "并入子卷 $s → /$d"
   mkdir -p "$MOUNT_DST/$d"
-  rsync -aHAX --numeric-ids --info=progress2 "$MOUNT_SRC/$s/" "$MOUNT_DST/$d/" \
+  rsync -aHAX --numeric-ids "$MOUNT_SRC/$s/" "$MOUNT_DST/$d/" >/dev/null \
     || warn "子卷 $s 并入侵失败（继续）"
 done
 
