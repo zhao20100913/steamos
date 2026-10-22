@@ -79,22 +79,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
-      - name: Checkout steamos repo (workspace root，供 nix-installer 识别 git 仓库)
-        uses: actions/checkout@v7
-
-      - name: Checkout liuqin-linux-kit
+      - name: Checkout liuqin-linux-kit（工作区根目录，devbox.json 与 .git 都在根）
         uses: actions/checkout@v7
         with:
           repository: ${{ inputs.kit_repo }}
           ref: ${{ inputs.kit_ref }}
-          path: liuqin-linux-kit
 
       - name: Install Devbox
         uses: jetify-com/devbox-install-action@v0.12.0
 
       - name: Prepare ROM + kernel + modules + boot
         run: |
-          cd liuqin-linux-kit
           devbox run init-build || true
           # 原厂 ROM 用于固件/调音/传感器配置提取（fetch-rom 从 cpidMi 下载完整包）
           devbox run fetch-rom || true
@@ -106,7 +101,6 @@ jobs:
       - name: Assemble device-inputs bundle
         run: |
           set -euo pipefail
-          cd liuqin-linux-kit
           OUT=graft-inputs
           rm -rf "$OUT"; mkdir -p "$OUT"/{kernel,firmware,overlay,sensors,audio,root,contract}
           # 模块阶段产物：modules.tar（整棵树）+ kernel.release + modules.manifest
@@ -142,8 +136,8 @@ jobs:
           # boot.img（目标内核）
           BOOTIMG="$(find out -name 'boot-liuqin-native.img' 2>/dev/null | head -1)"
           [ -z "$BOOTIMG" ] || cp "$BOOTIMG" "$OUT/boot.img"
-          tar -czf ../liuqin-inputs.tar.gz -C "$OUT" .
-          echo "liuqin-inputs 打包完成：$(du -h ../liuqin-inputs.tar.gz | cut -f1)"
+          tar -czf liuqin-inputs.tar.gz -C "$OUT" .
+          echo "liuqin-inputs 打包完成：$(du -h liuqin-inputs.tar.gz | cut -f1)"
 
       - name: Upload device-inputs bundle
         uses: actions/upload-artifact@v7
