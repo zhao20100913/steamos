@@ -1,0 +1,273 @@
+name: Build SteamOS for liuqin (Steam Frame base)
+
+# 用 Steam Frame 官方镜像（SteamOS holo / aarch64）作底包，注入 liuqin（小米平板 6 Pro，
+# SM8475）的内核/固件/设备层，产出可 fastboot 刷入的 rootfs.img + boot.img。
+# 与 steamos-sheng 的差异：内核从 sm8550-mainline 换成 liuqin-linux-kit 的 SM8475 内核
+# （Linux 7.3 + liuqin 补丁，带 initramfs）；设备层从 archlinux-sheng 的 pacman 包换成
+# liuqin-linux-kit 的 device/ 覆盖层与固件闭包；root 契约改为 liuqin root contract v2。
+on:
+  workflow_dispatch:
+    inputs:
+      frame_image_url:
+        description: 'Steam Frame 官方恢复镜像地址'
+        required: true
+        type: string
+        default: 'https://steamdeck-images.steamos.cloud/recovery/steamframe-repair-latest.img.bz2'
+      kit_repo:
+        description: 'liuqin-linux-kit 仓库（内核/设备层/固件来源）'
+        required: false
+        type: string
+        default: 'wkai343/liuqin-linux-kit'
+      kit_ref:
+        description: 'liuqin-linux-kit 分支/标签'
+        required: false
+        type: string
+        default: 'main'
+      rootfs_size:
+        description: 'rootfs.img 初始大小（下限，脚本按底包用量自动放大）'
+        required: false
+        type: string
+        default: '14G'
+      shrink_image:
+        description: '构建后收缩镜像'
+        required: false
+        type: boolean
+        default: true
+      kernel_release:
+        description: 'liuqin 内核 release（boot.img 与模块同源，由 liuqin-linux-kit 产出）'
+        required: false
+        type: string
+        default: ''
+      upload_artifacts:
+        description: '上传 rootfs.img / boot.img'
+        required: false
+        type: boolean
+        default: true
+      wifi_ssid:
+        description: '开机自动连接的 WiFi 名称（留空不配置）'
+        required: false
+        type: string
+        default: ''
+      wifi_password:
+        description: 'WiFi 密码（仅构建输入）'
+        required: false
+        type: string
+        default: ''
+      ssh_pubkey:
+        description: '写入 root authorized_keys 的公钥（留空不写）'
+        required: false
+        type: string
+        default: ''
+      root_password:
+        description: 'root 密码（留空不设置）'
+        required: false
+        type: string
+        default: '123456'
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+jobs:
+  # -------------------------------------------------------------------------
+  # 1) 用 liuqin-linux-kit 构建 liuqin 内核 / 模块 / boot.img / 固件 / 设备层
+  #    （x86_64 runner：Devbox 交叉编译 + QEMU 装配需要宿主 sudo/binfmt）
+  # -------------------------------------------------------------------------
+  device-inputs:
+    name: Build liuqin device inputs (kernel/modules/boot/firmware/overlay)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout liuqin-linux-kit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.kit_repo }}
+          ref: ${{ inputs.kit_ref }}
+          path: liuqin-linux-kit
+
+      - name: Install Devbox
+        uses: jetify-com/devbox-install-action@v0.12.0
+
+      - name: Prepare ROM + kernel + modules + boot
+        run: |
+          cd liuqin-linux-kit
+          devbox run -- init-build || true
+          # 原厂 ROM 用于固件/调音/传感器配置提取（fetch-rom 从 cpidMi 下载完整包）
+          devbox run -- fetch-rom || true
+          devbox run -- kernel || true
+          devbox run -- modules || true
+          devbox run -- boot || true
+          ls -la out/build/devbox/boot 2>/dev/null || true
+
+      - name: Assemble device-inputs bundle
+        run: |
+          set -euo pipefail
+          cd liuqin-linux-kit
+          OUT=graft-inputs
+          rm -rf "$OUT"; mkdir -p "$OUT"/{kernel,firmware,overlay,sensors,audio,root,contract}
+          # 模块阶段产物：modules.tar（整棵树）+ kernel.release + modules.manifest
+          MODDIR="$(find out/build/from-source -maxdepth 3 -type d -name modules 2>/dev/null | head -1 || true)"
+          if [ -n "$MODDIR" ]; then
+            # 解出模块树，让 graft 脚本能按 /usr/lib/modules/<release>/ 铺
+            if [ -f "$MODDIR/modules.tar" ]; then
+              tar -xf "$MODDIR/modules.tar" -C "$OUT/kernel/"
+            else
+              cp -a "$MODDIR/." "$OUT/kernel/modules/"
+            fi
+            cp -f "$MODDIR/kernel.release" "$OUT/kernel/kernel.release" 2>/dev/null || true
+            cp -f "$MODDIR/modules.manifest" "$OUT/kernel/modules.manifest" 2>/dev/null || true
+          fi
+          # 内核 Image（若 boot 阶段没单独留，从 kernel 阶段产物找）
+          KIMG="$(find out/build/from-source -path '*arch/arm64/boot/Image' 2>/dev/null | head -1 || true)"
+          [ -z "$KIMG" ] || cp -f "$KIMG" "$OUT/kernel/Image"
+          # boot.contract（native-root.contract）
+          BC="$(find out -name 'native-root.contract' 2>/dev/null | head -1 || true)"
+          [ -z "$BC" ] || cp -f "$BC" "$OUT/kernel/boot.contract"
+          [ -z "$BC" ] || cp -f "$BC" "$OUT/contract/native-root.contract"
+          # 设备 overlay：gnome-overlay + 设备服务（这些文件本就是根分区的项目自有路径）
+          [ -d device/gnome-overlay ] && cp -a device/gnome-overlay/. "$OUT/overlay/"
+          # 固件闭包（device/firmware 已含 ROM 提取闭包；否则需要 build-liuqin-firmware-prep.sh）
+          [ -d device/firmware ] && cp -a device/firmware/. "$OUT/firmware/"
+          # 音频调音 + 传感器覆盖
+          [ -f out/prepared-inputs/topology/Xiaomi-Pad-6-Pro-tplg.bin ] && \
+            cp -f out/prepared-inputs/topology/Xiaomi-Pad-6-Pro-tplg.bin "$OUT/audio/" 2>/dev/null || true
+          [ -d device/sensors-overlay ] && cp -a device/sensors-overlay/. "$OUT/sensors/" 2>/dev/null || true
+          # 根契约与救援工具来源
+          cp device/boot/root-interface-v2.sh "$OUT/root/" 2>/dev/null || true
+          cp inputs/busybox-arm64/usr/bin/busybox "$OUT/root/busybox" 2>/dev/null || true
+          # boot.img（目标内核）
+          BOOTIMG="$(find out -name 'boot-liuqin-native.img' 2>/dev/null | head -1)"
+          [ -z "$BOOTIMG" ] || cp "$BOOTIMG" "$OUT/boot.img"
+          tar -czf ../liuqin-inputs.tar.gz -C "$OUT" .
+          echo "liuqin-inputs 打包完成：$(du -h ../liuqin-inputs.tar.gz | cut -f1)"
+
+      - name: Upload device-inputs bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: liuqin-inputs
+          path: liuqin-inputs.tar.gz
+          retention-days: 7
+          compression-level: 0
+
+  # -------------------------------------------------------------------------
+  # 2) 取 Steam Frame → 铺 userspace → chroot graft liuqin 层 → 收尾 → 上传
+  # -------------------------------------------------------------------------
+  assemble:
+    name: Assemble SteamOS-for-liuqin RootFS
+    needs: [device-inputs]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    env:
+      ROOTFS_MOUNT: /mnt/rootfs
+      WORK: /mnt/frame-work
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Free disk space
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost \
+                      "$AGENT_TOOLSDIRECTORY/CodeQL" 2>/dev/null || true
+          df -h / | tail -1
+
+      - name: Install Host Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl gh bzip2 zstd xz-utils e2fsprogs rsync util-linux p7zip-full btrfs-progs
+
+      - name: Fetch Frame base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x scripts/host/00-fetch-frame-rootfs.sh
+          sudo env FRAME_IMAGE_URL="${{ inputs.frame_image_url }}" WORK="$WORK" OUT="$WORK/out" \
+            bash scripts/host/00-fetch-frame-rootfs.sh
+
+      - name: Download liuqin device inputs
+        uses: actions/download-artifact@v8
+        with:
+          name: liuqin-inputs
+          path: inputs
+
+      - name: Lay Frame userspace into our image
+        run: |
+          chmod +x scripts/host/01-lay-rootfs.sh
+          sudo env ROOT_LABEL=LIUQIN_ROOT bash scripts/host/01-lay-rootfs.sh \
+            "$WORK/out/rootfs.frame" rootfs.img "${{ inputs.rootfs_size }}"
+
+      - name: Mount chroot & graft liuqin device layer
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$ROOTFS_MOUNT"
+          sudo mount -o loop rootfs.img "$ROOTFS_MOUNT"
+          for d in dev dev/pts proc sys tmp; do sudo mkdir -p "$ROOTFS_MOUNT/$d"; done
+          sudo mount --bind /dev "$ROOTFS_MOUNT/dev"
+          sudo mount --bind /dev/pts "$ROOTFS_MOUNT/dev/pts"
+          sudo mount -t proc proc "$ROOTFS_MOUNT/proc"
+          sudo mount -t sysfs sys "$ROOTFS_MOUNT/sys"
+          sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf"
+          sudo cp /etc/resolv.conf "$ROOTFS_MOUNT/etc/resolv.conf" 2>/dev/null || \
+            printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf" >/dev/null
+          sudo mkdir -p "$ROOTFS_MOUNT/tmp/liuqin-inputs" "$ROOTFS_MOUNT/root/graft"
+          tar -xzf inputs/liuqin-inputs.tar.gz -C "$ROOTFS_MOUNT/tmp/liuqin-inputs"
+          # boot.img 同时抽到宿主工作区（后续校验与上传用）
+          tar -xOzf inputs/liuqin-inputs.tar.gz boot.img > boot.img
+          sudo cp scripts/in-chroot/10-graft.sh "$ROOTFS_MOUNT/root/graft/"
+          sudo chmod +x "$ROOTFS_MOUNT/root/graft/10-graft.sh"
+          chmod +x scripts/in-chroot/10-graft.sh
+          sudo chroot "$ROOTFS_MOUNT" /bin/bash -c \
+            "PARTLABEL='linux_root' KERNEL_RELEASE='${{ inputs.kernel_release }}' \
+             WIFI_SSID='${{ inputs.wifi_ssid }}' WIFI_PSK='${{ inputs.wifi_password }}' \
+             ROOT_PW='${{ inputs.root_password }}' SSH_PUBKEY='${{ inputs.ssh_pubkey }}' \
+             bash /root/graft/10-graft.sh"
+
+      - name: Unmount & finalize
+        if: always()
+        run: |
+          chmod +x scripts/host/03-finalize-image.sh
+          sudo env SHRINK_IMAGE="${{ inputs.shrink_image }}" bash scripts/host/03-finalize-image.sh rootfs.img "$ROOTFS_MOUNT"
+
+      - name: Verify kernel/module match
+        run: |
+          set -euo pipefail
+          # boot.img 由 device-inputs 产出（liuqin SM8475 内核 + initramfs），已抽到宿主
+          [ -s boot.img ] || { echo "::error::boot.img 缺失（device-inputs 未产出）"; exit 1; }
+          chmod +x scripts/host/04-verify-kernel-match.sh
+          bash scripts/host/04-verify-kernel-match.sh boot.img rootfs.img
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## SteamOS for liuqin 构建结果"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 底包 | Steam Frame 官方镜像（SteamOS holo aarch64） |"
+            echo "| 根分区 | PARTLABEL=linux_root / LABEL=LIUQIN_ROOT |"
+            echo "| 内核 | liuqin SM8475（liuqin-linux-kit, Linux 7.3） |"
+            echo "| rootfs.img | $(du -h rootfs.img 2>/dev/null | cut -f1 || echo N/A) |"
+            echo "| boot.img | $(du -h boot.img 2>/dev/null | cut -f1 || echo N/A) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload RootFS Image
+        if: inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: steamos-liuqin-rootfs
+          path: rootfs.img
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: error
+
+      - name: Upload Boot Image
+        if: inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: steamos-liuqin-boot
+          path: boot.img
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: error
