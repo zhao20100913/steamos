@@ -193,11 +193,13 @@ jobs:
             bash scripts/host/00-fetch-frame-rootfs.sh
 
       - name: Download liuqin device inputs
-        uses: actions/download-artifact@v8
-        with:
-          name: liuqin-inputs
-          path: inputs
-          run-id: ${{ inputs.reuse_inputs || github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RID="${{ inputs.reuse_inputs || github.run_id }}"
+          echo "从 run $RID 下载 liuqin-inputs 产物"
+          gh run download "$RID" --name liuqin-inputs --dir inputs --repo zhao20100913/steamos
+          ls -lh inputs/
 
       - name: Lay Frame userspace into our image
         run: |
