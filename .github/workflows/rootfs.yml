@@ -174,6 +174,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Checkout liuqin-linux-kit（设备 overlay 源码）
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.kit_repo }}
+          ref: ${{ inputs.kit_ref }}
+          path: kit
+
       - name: Free disk space
         run: |
           df -h / | tail -1
@@ -224,6 +231,12 @@ jobs:
             printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf" >/dev/null
           sudo mkdir -p "$ROOTFS_MOUNT/tmp/liuqin-inputs" "$ROOTFS_MOUNT/root/graft"
           sudo tar -xzf inputs/liuqin-inputs.tar.gz -C "$ROOTFS_MOUNT/tmp/liuqin-inputs"
+          # 从 kit 源码直接补齐设备 overlay（板级服务 + 传感器配置 + 可选桌面集成），
+          # 不依赖 device-inputs 的打包（这样可复用旧内核产物，跳过 55 分钟重编译）
+          sudo mkdir -p "$ROOTFS_MOUNT/tmp/liuqin-inputs"/{overlay,sensors,gnome-overlay}
+          sudo cp -a kit/device/board-overlay/. "$ROOTFS_MOUNT/tmp/liuqin-inputs/overlay/"
+          sudo cp -a kit/device/sensors-overlay/. "$ROOTFS_MOUNT/tmp/liuqin-inputs/sensors/"
+          sudo cp -a kit/device/gnome-overlay/. "$ROOTFS_MOUNT/tmp/liuqin-inputs/gnome-overlay/"
           # boot.img 从已解压的树里复制到宿主工作区（后续校验与上传用；tar 成员名带 ./ 前缀，勿用 tar -xO）
           sudo cp "$ROOTFS_MOUNT/tmp/liuqin-inputs/boot.img" boot.img
           sudo cp scripts/in-chroot/10-graft.sh "$ROOTFS_MOUNT/root/graft/"
