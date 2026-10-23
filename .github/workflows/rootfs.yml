@@ -221,7 +221,7 @@ jobs:
           sudo cp /etc/resolv.conf "$ROOTFS_MOUNT/etc/resolv.conf" 2>/dev/null || \
             printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf" >/dev/null
           sudo mkdir -p "$ROOTFS_MOUNT/tmp/liuqin-inputs" "$ROOTFS_MOUNT/root/graft"
-          tar -xzf inputs/liuqin-inputs.tar.gz -C "$ROOTFS_MOUNT/tmp/liuqin-inputs"
+          sudo tar -xzf inputs/liuqin-inputs.tar.gz -C "$ROOTFS_MOUNT/tmp/liuqin-inputs"
           # boot.img 同时抽到宿主工作区（后续校验与上传用）
           tar -xOzf inputs/liuqin-inputs.tar.gz boot.img > boot.img
           sudo cp scripts/in-chroot/10-graft.sh "$ROOTFS_MOUNT/root/graft/"
