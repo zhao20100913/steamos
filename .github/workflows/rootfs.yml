@@ -128,8 +128,10 @@ jobs:
           BC="$(find out -name 'native-root.contract' -not -path '*/.attempt-*' 2>/dev/null | head -1 || true)"
           [ -z "$BC" ] || cp -f "$BC" "$OUT/kernel/boot.contract"
           [ -z "$BC" ] || cp -f "$BC" "$OUT/contract/native-root.contract"
-          # 设备 overlay：gnome-overlay + 设备服务（这些文件本就是根分区的项目自有路径）
-          [ -d device/gnome-overlay ] && cp -a device/gnome-overlay/. "$OUT/overlay/"
+          # 设备 overlay：board-overlay（板级服务）+ sensors-overlay（传感器配置）
+          # 注：新版 liuqin-linux-kit 已把板级服务从 gnome-overlay 拆到 board-overlay
+          [ -d device/board-overlay ] && cp -a device/board-overlay/. "$OUT/overlay/"
+          [ -d device/gnome-overlay ] && cp -a device/gnome-overlay/. "$OUT/gnome-overlay/"
           # 固件闭包（device/firmware 已含 ROM 提取闭包；否则需要 build-liuqin-firmware-prep.sh）
           [ -d device/firmware ] && cp -a device/firmware/. "$OUT/firmware/"
           # 音频调音 + 传感器覆盖
