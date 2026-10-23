@@ -104,11 +104,40 @@ jobs:
           devbox run boot || true
           ls -la out/build/devbox/boot 2>/dev/null || true
 
+      - name: Build sensor stack (hexagonrpcd/iio-sensor-proxy/libssc)
+        run: |
+          set -euo pipefail
+          cat > build-sensors.sh <<'EOF'
+          set -euo pipefail
+          # 1) Ubuntu Base（runtime 底包）
+          curl -fsSL -o ubuntu-base.tar.gz "https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/release/ubuntu-base-26.04.1-base-arm64.tar.gz"
+          echo "5a1906794ced63a71a8119c3f211ef5f0bbe0a243001b4bbd41fdf80c5b219fd  ubuntu-base.tar.gz" | sha256sum -c -
+          # 2) runtime 根（Ubuntu Base + RUNTIME_PACKAGES，QEMU 内 apt）
+          sudo env PATH="$PATH" LC_ALL=C python3 build/scripts/build-official-root.py runtime \
+            --archive ubuntu-base.tar.gz \
+            --archive-sha256 5a1906794ced63a71a8119c3f211ef5f0bbe0a243001b4bbd41fdf80c5b219fd \
+            --out out/sensor-runtime
+          RT_SHA=$(sha256sum out/sensor-runtime/root.tar.gz | cut -d' ' -f1)
+          # 3) board/sensors（boot 阶段的 ROM 传感器配置）
+          BOARD_SENSORS=$(find out/build/from-source -type d -name sensors -not -path '*/.attempt-*' 2>/dev/null | head -1)
+          [ -n "$BOARD_SENSORS" ] || { echo "找不到 board/sensors"; exit 1; }
+          echo "board/sensors: $BOARD_SENSORS"
+          # 4) 构建传感器栈
+          sudo env PATH="$PATH" LC_ALL=C python3 build/scripts/build-official-root.py sensors \
+            --archive out/sensor-runtime/root.tar.gz --archive-sha256 "$RT_SHA" \
+            --out out/sensor-stack --rom-sensors "$BOARD_SENSORS" --jobs 12
+          cp out/sensor-stack/sensor-stack.tar sensor-stack.tar
+          echo "sensor-stack: $(du -h sensor-stack.tar | cut -f1)"
+          EOF
+          devbox run -- bash build-sensors.sh
+
       - name: Assemble device-inputs bundle
         run: |
           set -euo pipefail
           OUT=graft-inputs
           rm -rf "$OUT"; mkdir -p "$OUT"/{kernel,firmware,overlay,sensors,audio,root,contract}
+          # 传感器栈（编译产物 + sns_reg_version）合并进 sensors/
+          [ -f sensor-stack.tar ] && tar -xf sensor-stack.tar -C "$OUT/sensors/"
           # 模块阶段产物：modules.tar（整棵树）+ kernel.release + modules.manifest
           MODDIR="$(find out/build/from-source -maxdepth 3 -type d -name modules -not -path '*/.attempt-*' 2>/dev/null | head -1 || true)"
           if [ -n "$MODDIR" ]; then
