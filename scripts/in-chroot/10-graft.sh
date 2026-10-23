@@ -85,12 +85,17 @@ if [ -d "$INPUTS/audio" ]; then
     warn "缺 Xiaomi-Pad-6-Pro-tplg.bin（HiFi 音频拓扑）"
 fi
 
-log "铺 liuqin 设备 overlay（服务/脚本/udev/固件路径）"
+log "铺 liuqin 设备 overlay（board-overlay：板级服务）"
 if [ -d "$INPUTS/overlay" ]; then
   cp -a "$INPUTS/overlay/." / || die "设备 overlay 拷贝失败"
 fi
 
-log "铺 liuqin 传感器栈"
+# 可选：gnome-overlay（power-keyd / 相机 / 电源菜单等桌面集成）
+if [ -d "$INPUTS/gnome-overlay" ]; then
+  cp -a "$INPUTS/gnome-overlay/." / || warn "gnome-overlay 拷贝失败（可选）"
+fi
+
+log "铺 liuqin 传感器栈配置（sensors-overlay）"
 if [ -d "$INPUTS/sensors" ]; then
   cp -a "$INPUTS/sensors/." / || die "传感器栈拷贝失败"
 fi
