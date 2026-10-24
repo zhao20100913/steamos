@@ -43,6 +43,11 @@ on:
         required: false
         type: string
         default: ''
+      partlabel:
+        description: '根分区 GPT 名称（单系统=userdata，双系统=linux_root）'
+        required: false
+        type: string
+        default: 'userdata'
       upload_artifacts:
         description: '上传 rootfs.img / boot.img'
         required: false
@@ -298,7 +303,7 @@ jobs:
           chmod +x scripts/in-chroot/10-graft.sh
           # graft 输出落盘，失败时打印尾部，避免被别的步骤刷屏淹没
           sudo chroot "$ROOTFS_MOUNT" /bin/bash -c \
-            "PARTLABEL='linux_root' KERNEL_RELEASE='${{ inputs.kernel_release }}' \
+            "PARTLABEL='${{ inputs.partlabel }}' KERNEL_RELEASE='${{ inputs.kernel_release }}' \
              WIFI_SSID='${{ inputs.wifi_ssid }}' WIFI_PSK='${{ inputs.wifi_password }}' \
              ROOT_PW='${{ inputs.root_password }}' SSH_PUBKEY='${{ inputs.ssh_pubkey }}' \
              bash /root/graft/10-graft.sh" > graft-output.log 2>&1 || {
