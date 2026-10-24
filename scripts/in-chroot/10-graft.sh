@@ -100,6 +100,13 @@ if [ -d "$INPUTS/sensors" ]; then
   cp -a "$INPUTS/sensors/." / || die "传感器栈拷贝失败"
 fi
 
+# iio-sensor-proxy：sensor-stack.tar 里在 /usr/local/libexec/liuqin-iio-sensor-proxy，
+# root contract 要的是 /usr/libexec/iio-sensor-proxy（DEB 打包阶段才会搬，这里手动补上）
+if [ -x /usr/local/libexec/liuqin-iio-sensor-proxy ] && [ ! -e /usr/libexec/iio-sensor-proxy ]; then
+  install -D -m 0755 /usr/local/libexec/liuqin-iio-sensor-proxy /usr/libexec/iio-sensor-proxy
+  log "已把 iio-sensor-proxy 复制到 /usr/libexec/iio-sensor-proxy"
+fi
+
 log "铺 liuqin 根契约与救援工具"
 if [ -d "$INPUTS/root" ]; then cp -a "$INPUTS/root/." / || die "根契约拷贝失败"; fi
 if [ -d "$INPUTS/contract" ]; then
