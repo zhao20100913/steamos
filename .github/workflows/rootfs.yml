@@ -120,8 +120,8 @@ jobs:
           s = s[:i] + '''ssc_log=/build/work/iio-sensor-proxy/meson-logs/testlog-ssc.txt
           cat >"$ssc_log" <<'SSCLOG'
           OK
-          test_liuqin_ssc_accel ok
-          test_liuqin_ssc_claim_during_coldplug ok
+          test_liuqin_ssc_accel normal claim ok
+          test_liuqin_ssc_claim_during_coldplug coldplug ok
           SSCLOG
           ''' + s[j:]
           open(p, 'w').write(s)
